@@ -81,6 +81,21 @@ A high-performance web application for visualizing and exploring images stored i
    yarn dev
    ```
 
+### One-command dev loop
+
+After installing backend (`go mod tidy`) and frontend (`npm install`) deps once, you can run both servers together:
+
+```bash
+./scripts/dev.sh
+```
+
+This script:
+
+1. Finds your Go binary (respects `GO_BIN` env var if set).
+2. Starts the backend on port `8080`.
+3. Starts the frontend dev server on port `5173` with HMR.
+4. Handles Ctrl+C cleanly by terminating both processes.
+
 ## Architecture
 
 ### Backend
