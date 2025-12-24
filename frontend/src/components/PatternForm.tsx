@@ -29,7 +29,7 @@ export function PatternForm({ value, mode, onSubmit }: PatternFormProps) {
 
   return (
     <form className="pattern-form" onSubmit={handleSubmit}>
-      <div className="field">
+      <div className="field stretch">
         <label htmlFor="pattern-input">Pattern</label>
         <textarea
           id="pattern-input"
