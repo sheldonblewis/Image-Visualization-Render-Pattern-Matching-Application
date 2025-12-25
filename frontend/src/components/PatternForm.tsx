@@ -35,7 +35,7 @@ export function PatternForm({ value, mode, onSubmit }: PatternFormProps) {
           id="pattern-input"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          rows={2}
+          rows={1}
           spellCheck={false}
         />
       </div>

@@ -91,7 +91,7 @@ body {
 
 .pattern-form textarea {
   resize: none;
-  min-height: 96px;
+  min-height: 48px;
   line-height: 1.4;
 }
 
@@ -142,6 +142,11 @@ body {
   font-weight: 600;
   background: #fdfdfc;
   height: 48px;
+}
+
+.control.disabled select {
+  color: rgba(111, 108, 102, 0.7);
+  cursor: not-allowed;
 }
 
 main {

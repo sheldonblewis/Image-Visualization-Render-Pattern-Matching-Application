@@ -47,6 +47,7 @@ export default function App() {
 
   const captureNames = data?.pages[0]?.captureNames ?? [];
   const matches = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data]);
+  const controlsDisabled = captureNames.length === 0 || isLoading;
 
   useEffect(() => {
     if (!groupBy && captureNames.length > 0) {
@@ -77,24 +78,26 @@ export default function App() {
         />
       </header>
 
-      <section className="controls-bar">
-        <div className="control">
-          <label htmlFor="group-by">Group by</label>
-          <select
-            id="group-by"
-            value={groupBy ?? captureNames[0] ?? ''}
-            onChange={(e) => setGroupBy(e.target.value)}
-            disabled={captureNames.length === 0}
-          >
-            {captureNames.map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <ColumnSelector value={columns} onChange={setColumns} />
-      </section>
+      {captureNames.length > 0 && (
+        <section className="controls-bar">
+          <div className={`control${controlsDisabled ? ' disabled' : ''}`}>
+            <label htmlFor="group-by">Group by</label>
+            <select
+              id="group-by"
+              value={groupBy ?? captureNames[0] ?? ''}
+              onChange={(e) => setGroupBy(e.target.value)}
+              disabled={controlsDisabled}
+            >
+              {captureNames.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <ColumnSelector value={columns} onChange={setColumns} disabled={controlsDisabled} />
+        </section>
+      )}
 
       <main>
         <GridViewport
