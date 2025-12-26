@@ -15,6 +15,7 @@ interface GridViewportProps {
   isFetchingNextPage: boolean;
   onSelect: (item: MatchItem) => void;
   columns: number;
+  captureNames: string[];
 }
 
 interface RowProps {
@@ -23,65 +24,72 @@ interface RowProps {
   onSelect: (item: MatchItem) => void;
 }
 
-const ThumbCard = memo(({ item, onSelect }: { item: MatchItem; onSelect: (item: MatchItem) => void }) => {
-  const [status, setStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
+const ThumbCard = memo(
+  ({ item, onSelect, displayLabel }: { item: MatchItem; onSelect: (item: MatchItem) => void; displayLabel: string }) => {
+    const [status, setStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
 
-  return (
-    <button className={`image-card ${status}`} onClick={() => status !== 'error' && onSelect(item)}>
-      <div className="thumb">
-        {status === 'error' ? (
-          <span className="thumb-error">Failed to load</span>
-        ) : (
-          <img
-            src={item.url}
-            alt={item.object}
-            loading="lazy"
-            onLoad={() => setStatus('loaded')}
-            onError={() => setStatus('error')}
-          />
-        )}
-      </div>
-      <div className="meta">
-        <span className="meta-primary">
-          {item.groupKey} · {item.groupValue}
-        </span>
-        <span className="meta-secondary">{item.object}</span>
-      </div>
-    </button>
-  );
-});
-
-const ListRow = memo(({ row, style, onSelect, columns }: RowProps & { columns: number }) => {
-  if (!row) return null;
-
-  if (row.type === 'header') {
     return (
-      <div className="grid-row header-row" style={style}>
-        <span>{row.label}</span>
+      <button className={`image-card ${status}`} onClick={() => status !== 'error' && onSelect(item)}>
+        <div className="thumb">
+          {status === 'error' ? (
+            <span className="thumb-error">Failed to load</span>
+          ) : (
+            <img
+              src={item.url}
+              alt={item.object}
+              loading="lazy"
+              onLoad={() => setStatus('loaded')}
+              onError={() => setStatus('error')}
+            />
+          )}
+        </div>
+        <div className="meta">
+          <span className="meta-primary">{displayLabel}</span>
+          <span className="meta-secondary" title={item.object}>
+            {item.object}
+          </span>
+        </div>
+      </button>
+    );
+  }
+);
+
+const ListRow = memo(
+  ({ row, style, onSelect, columns, captureNames }: RowProps & { columns: number; captureNames: string[] }) => {
+    if (!row) return null;
+
+    if (row.type === 'header') {
+      return (
+        <div className="grid-row header-row" style={style}>
+          <span>{row.label}</span>
+        </div>
+      );
+    }
+
+    const placeholders = Math.max(0, columns - row.items.length);
+    return (
+      <div
+        className="grid-row image-row"
+        style={{
+          ...style,
+          display: 'grid',
+          gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+          gap: '1rem',
+        }}
+      >
+        {row.items.map((item) => {
+          const secondaryKey = captureNames.find((name) => name !== item.groupKey) ?? item.groupKey;
+          const secondaryValue = item.captures[secondaryKey] ?? item.groupValue;
+          const label = secondaryKey ? `${secondaryKey}: ${secondaryValue}` : secondaryValue;
+          return <ThumbCard key={item.object} item={item} onSelect={onSelect} displayLabel={label} />;
+        })}
+        {Array.from({ length: placeholders }).map((_, idx) => (
+          <div key={`placeholder-${row.key}-${idx}`} className="image-card placeholder" aria-hidden="true" />
+        ))}
       </div>
     );
   }
-
-  const placeholders = Math.max(0, columns - row.items.length);
-  return (
-    <div
-      className="grid-row image-row"
-      style={{
-        ...style,
-        display: 'grid',
-        gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-        gap: '1rem',
-      }}
-    >
-      {row.items.map((item) => (
-        <ThumbCard key={item.object} item={item} onSelect={onSelect} />
-      ))}
-      {Array.from({ length: placeholders }).map((_, idx) => (
-        <div key={`placeholder-${row.key}-${idx}`} className="image-card placeholder" aria-hidden="true" />
-      ))}
-    </div>
-  );
-});
+);
 
 export function GridViewport({
   rows,
@@ -92,6 +100,7 @@ export function GridViewport({
   isFetchingNextPage,
   onSelect,
   columns,
+  captureNames,
 }: GridViewportProps) {
   const { height } = useWindowSize();
   const listHeight = Math.max(360, height - 320);
@@ -143,7 +152,7 @@ export function GridViewport({
         onItemsRendered={handleItemsRendered}
       >
         {({ index, style }) => (
-          <ListRow row={rows[index]} style={style} onSelect={onSelect} columns={columns} />
+          <ListRow row={rows[index]} style={style} onSelect={onSelect} columns={columns} captureNames={captureNames} />
         )}
       </VariableSizeList>
       {isFetchingNextPage && (

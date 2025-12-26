@@ -55,11 +55,12 @@ export default function App() {
     }
   }, [captureNames, groupBy]);
 
-  const { rows, matches: groupedMatches, groupCount } = useMemo<GroupedResult>(
+  const { rows, matches: groupedMatches } = useMemo<GroupedResult>(
     () => groupMatches(matches, groupBy && captureNames.includes(groupBy) ? groupBy : captureNames[0], columns),
     [matches, groupBy, captureNames, columns]
   );
   const totalFiles = groupedMatches.length;
+  const captureCount = captureNames.length;
 
   return (
     <div className="app-shell">
@@ -101,7 +102,9 @@ export default function App() {
               <ColumnSelector value={columns} onChange={setColumns} disabled={controlsDisabled} />
             </div>
             <div className="results-meta">
-              <span>{groupCount.toLocaleString()} groups</span>
+              <span>
+                {captureCount} capture group{captureCount === 1 ? '' : 's'}
+              </span>
               <span>{totalFiles.toLocaleString()} files</span>
             </div>
           </div>
@@ -115,6 +118,7 @@ export default function App() {
             isFetchingNextPage={isFetchingNextPage}
             onSelect={setSelected}
             columns={columns}
+            captureNames={captureNames}
           />
         </section>
       )}

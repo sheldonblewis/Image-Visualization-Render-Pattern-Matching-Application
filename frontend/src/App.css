@@ -274,6 +274,7 @@ main {
   flex-direction: column;
   gap: 0.1rem;
   text-align: left;
+  width: 100%;
 }
 
 .meta-primary {
@@ -284,6 +285,9 @@ main {
 .meta-secondary {
   font-size: 0.82rem;
   color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .panel {
