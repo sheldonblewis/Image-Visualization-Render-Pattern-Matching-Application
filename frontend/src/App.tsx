@@ -65,8 +65,8 @@ export default function App() {
     <div className="app-shell">
       <header className="app-header">
         <div className="title-block">
-          <span className="eyebrow">Image Grid Viewer</span>
-          <h1>Pattern Matched Exploration</h1>
+          <span className="eyebrow">Google Cloud Storage</span>
+          <h1>Image Grid Viewer</h1>
         </div>
         <PatternForm
           value={pattern}
