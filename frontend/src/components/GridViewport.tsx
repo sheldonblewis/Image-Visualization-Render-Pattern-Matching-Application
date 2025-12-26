@@ -14,6 +14,7 @@ interface GridViewportProps {
   fetchNextPage: () => Promise<unknown> | void;
   isFetchingNextPage: boolean;
   onSelect: (item: MatchItem) => void;
+  columns: number;
 }
 
 interface RowProps {
@@ -50,7 +51,7 @@ const ThumbCard = memo(({ item, onSelect }: { item: MatchItem; onSelect: (item: 
   );
 });
 
-const ListRow = memo(({ row, style, onSelect }: RowProps) => {
+const ListRow = memo(({ row, style, onSelect, columns }: RowProps & { columns: number }) => {
   if (!row) return null;
 
   if (row.type === 'header') {
@@ -61,10 +62,22 @@ const ListRow = memo(({ row, style, onSelect }: RowProps) => {
     );
   }
 
+  const placeholders = Math.max(0, columns - row.items.length);
   return (
-    <div className="grid-row image-row" style={style}>
+    <div
+      className="grid-row image-row"
+      style={{
+        ...style,
+        display: 'grid',
+        gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+        gap: '1rem',
+      }}
+    >
       {row.items.map((item) => (
         <ThumbCard key={item.object} item={item} onSelect={onSelect} />
+      ))}
+      {Array.from({ length: placeholders }).map((_, idx) => (
+        <div key={`placeholder-${row.key}-${idx}`} className="image-card placeholder" aria-hidden="true" />
       ))}
     </div>
   );
@@ -78,6 +91,7 @@ export function GridViewport({
   fetchNextPage,
   isFetchingNextPage,
   onSelect,
+  columns,
 }: GridViewportProps) {
   const { height } = useWindowSize();
   const listHeight = Math.max(360, height - 320);
@@ -97,7 +111,7 @@ export function GridViewport({
   const handleItemsRendered = useCallback(
     ({ visibleStopIndex }: ListOnItemsRenderedProps) => {
       if (!hasNextPage || isFetchingNextPage) return;
-      if (visibleStopIndex >= rows.length - 3) {
+      if (visibleStopIndex >= rows.length - 8) {
         fetchNextPage();
       }
     },
@@ -129,10 +143,17 @@ export function GridViewport({
         onItemsRendered={handleItemsRendered}
       >
         {({ index, style }) => (
-          <ListRow row={rows[index]} style={style} onSelect={onSelect} />
+          <ListRow row={rows[index]} style={style} onSelect={onSelect} columns={columns} />
         )}
       </VariableSizeList>
-      {isFetchingNextPage && <div className="panel status subtle">Loading more…</div>}
+      {isFetchingNextPage && (
+        <div className="panel status subtle loading-inline">
+          <span>Loading more…</span>
+          <div className="progress">
+            <div className="progress-bar" />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

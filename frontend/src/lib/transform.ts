@@ -12,11 +12,12 @@ export type GridRow =
 export interface GroupedResult {
   rows: GridRow[];
   matches: MatchItem[];
+  groupCount: number;
 }
 
 export function groupMatches(items: QueryItem[], groupBy?: string, columns = 4): GroupedResult {
   if (!items.length || !groupBy) {
-    return { rows: [], matches: [] };
+    return { rows: [], matches: [], groupCount: 0 };
   }
 
   const groups = new Map<string, MatchItem[]>();
@@ -48,5 +49,5 @@ export function groupMatches(items: QueryItem[], groupBy?: string, columns = 4):
     }
   }
 
-  return { rows, matches };
+  return { rows, matches, groupCount: sortedKeys.length };
 }

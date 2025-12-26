@@ -55,10 +55,11 @@ export default function App() {
     }
   }, [captureNames, groupBy]);
 
-  const { rows, matches: groupedMatches } = useMemo<GroupedResult>(
+  const { rows, matches: groupedMatches, groupCount } = useMemo<GroupedResult>(
     () => groupMatches(matches, groupBy && captureNames.includes(groupBy) ? groupBy : captureNames[0], columns),
     [matches, groupBy, captureNames, columns]
   );
+  const totalFiles = groupedMatches.length;
 
   return (
     <div className="app-shell">
@@ -78,38 +79,45 @@ export default function App() {
         />
       </header>
 
-      {captureNames.length > 0 && (
-        <section className="controls-bar">
-          <div className={`control${controlsDisabled ? ' disabled' : ''}`}>
-            <label htmlFor="group-by">Group by</label>
-            <select
-              id="group-by"
-              value={groupBy ?? captureNames[0] ?? ''}
-              onChange={(e) => setGroupBy(e.target.value)}
-              disabled={controlsDisabled}
-            >
-              {captureNames.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
+      {(captureNames.length > 0 || isLoading) && (
+        <section className="results-shell">
+          <div className="results-top">
+            <div className="controls-bar">
+              <div className={`control${controlsDisabled ? ' disabled' : ''}`}>
+                <label htmlFor="group-by">Group by</label>
+                <select
+                  id="group-by"
+                  value={groupBy ?? captureNames[0] ?? ''}
+                  onChange={(e) => setGroupBy(e.target.value)}
+                  disabled={controlsDisabled}
+                >
+                  {captureNames.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <ColumnSelector value={columns} onChange={setColumns} disabled={controlsDisabled} />
+            </div>
+            <div className="results-meta">
+              <span>{groupCount.toLocaleString()} groups</span>
+              <span>{totalFiles.toLocaleString()} files</span>
+            </div>
           </div>
-          <ColumnSelector value={columns} onChange={setColumns} disabled={controlsDisabled} />
+
+          <GridViewport
+            rows={rows}
+            isLoading={isLoading}
+            error={error instanceof Error ? error.message : undefined}
+            hasNextPage={hasNextPage}
+            fetchNextPage={fetchNextPage}
+            isFetchingNextPage={isFetchingNextPage}
+            onSelect={setSelected}
+            columns={columns}
+          />
         </section>
       )}
-
-      <main>
-        <GridViewport
-          rows={rows}
-          isLoading={isLoading}
-          error={error instanceof Error ? error.message : undefined}
-          hasNextPage={hasNextPage}
-          fetchNextPage={fetchNextPage}
-          isFetchingNextPage={isFetchingNextPage}
-          onSelect={setSelected}
-        />
-      </main>
 
       <ViewerModal
         items={groupedMatches}
