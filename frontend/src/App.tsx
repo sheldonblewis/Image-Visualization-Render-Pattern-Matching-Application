@@ -253,7 +253,7 @@ export default function App() {
                 {matchedTotal !== null
                   ? `${matchedTotal.toLocaleString()} files`
                   : isCounting
-                  ? 'Counting…'
+                  ? 'Counting files…'
                   : countError instanceof Error
                   ? 'Count unavailable'
                   : '—'}
