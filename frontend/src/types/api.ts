@@ -23,3 +23,12 @@ export interface QueryResponse {
     matched: number;
   };
 }
+
+export interface CountResponse {
+  total: number;
+  stats?: {
+    scannedPrefixes: number;
+    scannedObjects: number;
+    matched: number;
+  };
+}

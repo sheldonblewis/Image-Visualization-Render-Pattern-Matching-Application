@@ -108,6 +108,8 @@ func (qs *QueryService) Query(ctx context.Context, req QueryRequest) (*QueryResp
 		workerCount = 1
 	}
 
+	objectBatchSize := qs.objectBatchSize(pageSize)
+
 	for len(items) < pageSize && len(jobs) > 0 {
 		remaining := pageSize - len(items)
 		if remaining <= 0 {
@@ -119,56 +121,15 @@ func (qs *QueryService) Query(ctx context.Context, req QueryRequest) (*QueryResp
 			batchSize = len(jobs)
 		}
 
-		rawBatch := make([]jobTask, 0, batchSize)
-		for len(rawBatch) < batchSize && len(jobs) > 0 {
+		finalBatch := make([]jobTask, 0, batchSize)
+		for len(finalBatch) < batchSize && len(jobs) > 0 {
 			job := jobs[0]
 			jobs = jobs[1:]
-			rawBatch = append(rawBatch, jobTask{job: job})
-		}
-
-		if len(rawBatch) == 0 {
-			break
-		}
-
-		deferred := make([]listJob, 0)
-		objectJobsRemaining := 0
-		for _, task := range rawBatch {
-			if task.job.Kind == jobKindObjects {
-				objectJobsRemaining++
+			task := jobTask{job: job}
+			if job.Kind == jobKindObjects {
+				task.limit = objectBatchSize
 			}
-		}
-
-		finalBatch := make([]jobTask, 0, len(rawBatch))
-		objectsLeft := objectJobsRemaining
-		allocRemaining := remaining
-
-		for _, task := range rawBatch {
-			if task.job.Kind != jobKindObjects {
-				finalBatch = append(finalBatch, task)
-				continue
-			}
-
-			if allocRemaining <= 0 || objectsLeft <= 0 {
-				deferred = append(deferred, task.job)
-				objectsLeft--
-				continue
-			}
-
-			limit := allocRemaining / objectsLeft
-			if limit == 0 {
-				limit = 1
-			}
-			if limit > allocRemaining {
-				limit = allocRemaining
-			}
-
-			finalBatch = append(finalBatch, jobTask{job: task.job, limit: limit})
-			allocRemaining -= limit
-			objectsLeft--
-		}
-
-		if len(deferred) > 0 {
-			jobs = append(deferred, jobs...)
+			finalBatch = append(finalBatch, task)
 		}
 
 		if len(finalBatch) == 0 {
@@ -192,14 +153,7 @@ func (qs *QueryService) Query(ctx context.Context, req QueryRequest) (*QueryResp
 						err:     err,
 					}
 				case jobKindObjects:
-					if task.limit <= 0 {
-						outcomes <- jobOutcome{
-							newJobs: []listJob{task.job},
-							stats:   localStats,
-						}
-						return
-					}
-					newItems, nextJobs, err := qs.processObjectsJob(ctx, cp, task.job, task.limit, &localStats)
+					newItems, nextJobs, err := qs.processObjectsJob(ctx, cp, task.job, task.limit, &localStats, true)
 					outcomes <- jobOutcome{
 						items:   newItems,
 						newJobs: nextJobs,
@@ -263,6 +217,100 @@ func (qs *QueryService) Query(ctx context.Context, req QueryRequest) (*QueryResp
 		Items:        items,
 		NextCursor:   nextCursor,
 		Stats:        stats,
+	}, nil
+}
+
+func (qs *QueryService) Count(ctx context.Context, req QueryRequest) (*CountResponse, error) {
+	pattern := strings.TrimSpace(req.Pattern)
+	if pattern == "" {
+		return nil, newClientError("pattern is required")
+	}
+
+	mode, err := ParseMode(req.Mode)
+	if err != nil {
+		return nil, err
+	}
+
+	cp, err := parsePattern(pattern, mode)
+	if err != nil {
+		return nil, newClientError("%v", err)
+	}
+
+	jobs := qs.buildInitialJobs(cp)
+	stats := QueryStats{}
+
+	workerCount := qs.cfg.WorkerCount
+	if workerCount < 1 {
+		workerCount = 1
+	}
+
+	objectBatchSize := qs.objectBatchSize(qs.cfg.MaxPageSize)
+
+	for len(jobs) > 0 {
+		batchSize := workerCount
+		if len(jobs) < batchSize {
+			batchSize = len(jobs)
+		}
+
+		finalBatch := make([]jobTask, 0, batchSize)
+		for len(finalBatch) < batchSize && len(jobs) > 0 {
+			job := jobs[0]
+			jobs = jobs[1:]
+			task := jobTask{job: job}
+			if job.Kind == jobKindObjects {
+				task.limit = objectBatchSize
+			}
+			finalBatch = append(finalBatch, task)
+		}
+
+		outcomes := make(chan jobOutcome, len(finalBatch))
+		var wg sync.WaitGroup
+
+		for _, task := range finalBatch {
+			wg.Add(1)
+			go func(task jobTask) {
+				defer wg.Done()
+				localStats := QueryStats{}
+				switch task.job.Kind {
+				case jobKindSegment:
+					additionalJobs, err := qs.processSegmentJob(ctx, cp, task.job, &localStats)
+					outcomes <- jobOutcome{
+						newJobs: additionalJobs,
+						stats:   localStats,
+						err:     err,
+					}
+				case jobKindObjects:
+					_, nextJobs, err := qs.processObjectsJob(ctx, cp, task.job, task.limit, &localStats, false)
+					outcomes <- jobOutcome{
+						newJobs: nextJobs,
+						stats:   localStats,
+						err:     err,
+					}
+				default:
+					outcomes <- jobOutcome{err: fmt.Errorf("unknown job kind: %s", task.job.Kind)}
+				}
+			}(task)
+		}
+
+		wg.Wait()
+		close(outcomes)
+
+		for outcome := range outcomes {
+			if outcome.err != nil {
+				return nil, outcome.err
+			}
+			stats.ScannedPrefixes += outcome.stats.ScannedPrefixes
+			stats.ScannedObjects += outcome.stats.ScannedObjects
+			stats.Matched += outcome.stats.Matched
+			if len(outcome.newJobs) > 0 {
+				jobs = append(jobs, outcome.newJobs...)
+			}
+		}
+	}
+
+	return &CountResponse{
+		Total: stats.Matched,
+		Stats: stats,
 	}, nil
 }
 
@@ -362,9 +410,9 @@ func (qs *QueryService) processSegmentJob(ctx context.Context, cp *compiledPatte
 	return newJobs, nil
 }
 
-func (qs *QueryService) processObjectsJob(ctx context.Context, cp *compiledPattern, job listJob, limit int, stats *QueryStats) ([]QueryItem, []listJob, error) {
+func (qs *QueryService) processObjectsJob(ctx context.Context, cp *compiledPattern, job listJob, limit int, stats *QueryStats, collect bool) ([]QueryItem, []listJob, error) {
 	if limit <= 0 {
-		return nil, []listJob{job}, nil
+		limit = qs.cfg.MaxPageSize
 	}
 
 	var objectPrefix string
@@ -379,53 +427,77 @@ func (qs *QueryService) processObjectsJob(ctx context.Context, cp *compiledPatte
 		objectPrefix = joinPath(basePrefix, finalSeg.LiteralPrefix)
 	}
 
-	resp, err := qs.storage.List(ctx, storage.ListRequest{
-		Bucket:    cp.Bucket,
-		Prefix:    objectPrefix,
-		PageToken: job.PageToken,
-		PageSize:  min(limit, qs.cfg.MaxPageSize),
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-
+	remaining := limit
+	nextToken := job.PageToken
+	pagesRemaining := qs.prefetchPageCount()
 	var items []QueryItem
-	for _, obj := range resp.Objects {
-		stats.ScannedObjects++
-		matches := cp.Matcher.FindStringSubmatch(obj.Name)
-		if matches == nil {
-			continue
+
+	for remaining > 0 && pagesRemaining > 0 {
+		pageSize := min(remaining, qs.cfg.MaxPageSize)
+		resp, err := qs.storage.List(ctx, storage.ListRequest{
+			Bucket:    cp.Bucket,
+			Prefix:    objectPrefix,
+			PageToken: nextToken,
+			PageSize:  pageSize,
+		})
+		if err != nil {
+			return nil, nil, err
 		}
-		captures := make(map[string]string, len(cp.CaptureNames))
-		for i, name := range cp.SubexpNames {
-			if i == 0 || name == "" {
+
+		for _, obj := range resp.Objects {
+			stats.ScannedObjects++
+			matches := cp.Matcher.FindStringSubmatch(obj.Name)
+			if matches == nil {
 				continue
 			}
-			if i < len(matches) {
-				captures[name] = matches[i]
+
+			stats.Matched++
+			if collect {
+				captures := make(map[string]string, len(cp.CaptureNames))
+				for i, name := range cp.SubexpNames {
+					if i == 0 || name == "" {
+						continue
+					}
+					if i < len(matches) {
+						captures[name] = matches[i]
+					}
+				}
+				items = append(items, QueryItem{
+					Object:   obj.Name,
+					URL:      fmt.Sprintf("https://storage.googleapis.com/%s/%s", cp.Bucket, obj.Name),
+					Captures: captures,
+				})
+			}
+
+			remaining--
+			if remaining <= 0 {
+				break
 			}
 		}
-		items = append(items, QueryItem{
-			Object:   obj.Name,
-			URL:      fmt.Sprintf("https://storage.googleapis.com/%s/%s", cp.Bucket, obj.Name),
-			Captures: captures,
-		})
-		stats.Matched++
-		if len(items) >= limit {
+
+		if resp.NextPageToken == "" {
+			nextToken = ""
+			break
+		}
+
+		nextToken = resp.NextPageToken
+		pagesRemaining--
+		if remaining <= 0 {
 			break
 		}
 	}
 
-	if resp.NextPageToken != "" {
-		return items, []listJob{{
+	var nextJobs []listJob
+	if nextToken != "" {
+		nextJobs = append(nextJobs, listJob{
 			Kind:         job.Kind,
 			SegmentIndex: job.SegmentIndex,
 			Prefix:       job.Prefix,
-			PageToken:    resp.NextPageToken,
-		}}, nil
+			PageToken:    nextToken,
+		})
 	}
 
-	return items, nil, nil
+	return items, nextJobs, nil
 }
 
 func (qs *QueryService) decodeCursor(encoded string) (*cursorState, error) {
@@ -481,4 +553,26 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func (qs *QueryService) objectBatchSize(pageSize int) int {
+	workers := qs.cfg.WorkerCount
+	if workers < 1 {
+		workers = 1
+	}
+	share := (pageSize + workers - 1) / workers
+	if share < qs.cfg.MinPageSize {
+		share = qs.cfg.MinPageSize
+	}
+	if share > qs.cfg.MaxPageSize {
+		share = qs.cfg.MaxPageSize
+	}
+	return share * qs.prefetchPageCount()
+}
+
+func (qs *QueryService) prefetchPageCount() int {
+	if qs.cfg.PrefetchPages < 1 {
+		return 1
+	}
+	return qs.cfg.PrefetchPages
 }

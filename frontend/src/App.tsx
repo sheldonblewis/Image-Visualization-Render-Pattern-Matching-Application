@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { PatternForm } from './components/PatternForm';
 import { GridViewport } from './components/GridViewport';
 import { ViewerModal } from './components/ViewerModal';
 import { ColumnSelector } from './components/ColumnSelector';
 import { groupMatches, MatchItem, GroupedResult } from './lib/transform';
-import { QueryMode, QueryResponse } from './types/api';
+import { QueryMode, QueryResponse, CountResponse } from './types/api';
 import './App.css';
 
 const DEFAULT_PATTERN = 'gs://wlt-public-sandbox/imgrid-takehome/%exp%/%class%_00.jpg';
@@ -47,10 +47,34 @@ export default function App() {
     refetchOnMount: false,
   });
 
+  const {
+    data: countData,
+    isFetching: isCounting,
+    error: countError,
+  } = useQuery<CountResponse>({
+    queryKey: ['count', pattern, mode, queryVersion],
+    queryFn: async () => {
+      const response = await fetch('/api/count', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pattern, mode, pageSize: 120 }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || 'Count failed');
+      }
+      return response.json();
+    },
+    enabled: hasSubmitted && !!pattern,
+    staleTime: Infinity,
+    refetchOnMount: false,
+  });
+
   const captureNames = data?.pages[0]?.captureNames ?? [];
   const matches = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data]);
   const controlsDisabled = captureNames.length === 0 || isLoading;
   const allItemsLoaded = !hasNextPage && !isFetchingNextPage;
+  const matchedTotal = countData?.total ?? null;
 
   useEffect(() => {
     if (captureNames.length > 0) {
@@ -225,7 +249,16 @@ export default function App() {
               <span>
                 {captureCount} capture group{captureCount === 1 ? '' : 's'}
               </span>
-              <span>{totalFiles.toLocaleString()} files</span>
+              <span>
+                {matchedTotal !== null
+                  ? `${matchedTotal.toLocaleString()} files`
+                  : isCounting
+                  ? 'Counting…'
+                  : countError instanceof Error
+                  ? 'Count unavailable'
+                  : '—'}
+              </span>
+              <span className="muted">{totalFiles.toLocaleString()} loaded</span>
             </div>
           </div>
 

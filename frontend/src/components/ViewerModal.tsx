@@ -122,7 +122,6 @@ export function ViewerModal({
             <div className="key-hint">
               <span className="key">←</span>
               <span className="key">→</span>
-              <span>{wrapEnabled ? 'Wrap enabled' : 'Wrap locked'}</span>
             </div>
             <span>{showLoadingCard ? `${items.length} loaded` : `${selectedIndex + 1} / ${items.length}`}</span>
           </div>

@@ -98,7 +98,6 @@ const ListRow = memo(
       );
     }
 
-    const placeholders = Math.max(0, columns - row.items.length);
     return (
       <div
         className="grid-row image-row"
@@ -115,9 +114,6 @@ const ListRow = memo(
           const label = secondaryKey ? `${secondaryKey}: ${secondaryValue}` : secondaryValue;
           return <ThumbCard key={item.object} item={item} onSelect={onSelect} displayLabel={label} />;
         })}
-        {Array.from({ length: placeholders }).map((_, idx) => (
-          <div key={`placeholder-${row.key}-${idx}`} className="image-card placeholder" aria-hidden="true" />
-        ))}
       </div>
     );
   }

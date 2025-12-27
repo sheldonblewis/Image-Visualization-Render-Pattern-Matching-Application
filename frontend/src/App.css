@@ -149,6 +149,12 @@ body {
   color: var(--muted);
 }
 
+.results-meta .muted {
+  font-weight: 500;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
 .controls-bar {
   display: flex;
   gap: 1.5rem;

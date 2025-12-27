@@ -1,216 +1,100 @@
-# Image-Visualization-Render-Pattern-Matching-Application
+# Image Grid Viewer
 
-A high-performance web application for visualizing and exploring images stored in Google Cloud Storage with pattern-based querying capabilities.
+An interactive web UI for exploring Google Cloud Storage datasets by pattern. Provide a `gs://bucket/path/%capture%/...` template or named-regex and browse the matching images in a responsive grid with keyboard navigation and a full-screen viewer.
 
-## Features
+## Quick Start
 
-- Pattern-based image querying with `%variable%` syntax
-- Efficient GCS object listing with minimal directory scanning
-- Responsive grid layout with lazy loading
-- Dynamic grouping of results by captured variables
-- Infinite scroll pagination
-- Full-screen image viewer
-- Column count adjustment (2/4/6/8 columns)
-- Keyboard navigation
-- Optimized for large datasets (100,000+ images)
+### Requirements
 
-## Tech Stack
+- Go 1.21+
+- Node.js 18+ (npm)
+- Access to a GCS bucket (defaults to `wlt-public-sandbox`)
 
-### Backend (Go)
-- **Framework**: Standard Library + Gorilla Mux
-- **GCP**: cloud.google.com/go/storage (gRPC-enabled)
-- **Concurrency**: Native Go routines with worker pool
-- **API**: RESTful JSON API
+### Install
 
-### Frontend (React + TypeScript)
-- **UI**: React 18 + Vite
-- **State Management**: TanStack Query + React Context
-- **Virtualization**: react-window
-- **Styling**: Tailwind CSS
-- **Icons**: Lucide React
+```bash
+go mod tidy ./backend
+npm install --prefix frontend
+```
 
-## Prerequisites
-
-- Go 1.21+ (for backend)
-- Node.js 18+ and npm/yarn (for frontend)
-- Google Cloud SDK (for local development with GCS)
-
-## Getting Started
-
-### Backend Setup
-
-1. Navigate to the backend directory:
-   ```bash
-   cd backend
-   ```
-
-2. Install dependencies:
-   ```bash
-   go mod tidy
-   ```
-
-3. Set up environment variables:
-   ```bash
-   cp .env.example .env
-   # Edit .env with your configuration
-   ```
-
-4. Run the server:
-   ```bash
-   go run cmd/server/main.go
-   ```
-
-### Frontend Setup
-
-1. Navigate to the frontend directory:
-   ```bash
-   cd frontend
-   ```
-
-2. Install dependencies:
-   ```bash
-   npm install
-   # or
-   yarn
-   ```
-
-3. Start the development server:
-   ```bash
-   npm run dev
-   # or
-   yarn dev
-   ```
-
-### One-command dev loop
-
-After installing backend (`go mod tidy`) and frontend (`npm install`) deps once, you can run both servers together:
+### Run (single command)
 
 ```bash
 ./scripts/dev.sh
 ```
 
-This script:
+The script boots the Go API on `:8080` and the Vite dev server on `:5173`. Visit http://localhost:5173 to use the app.
 
-1. Finds your Go binary (respects `GO_BIN` env var if set).
-2. Starts the backend on port `8080`.
-3. Starts the frontend dev server on port `5173` with HMR.
-4. Handles Ctrl+C cleanly by terminating both processes.
+> Need custom config? Set env vars (e.g. `PORT`, `GCS_BUCKET`, `ALLOWED_ORIGINS`) before running the script.
 
-## Architecture
+## Using the App
 
-### Backend
+1. **Enter a pattern** – examples:
+   - Percent tokens: `gs://bucket/imgrid/%exp%/%class%_%idx%.jpg`
+   - Regex mode: `gs://bucket/(?P<exp>[^/]+)/(?P<class>\d+)_00.jpg`
+2. **Choose mode** – *percent* (default) or *regex*.
+3. **Run query** – results stream into the grid with infinite scroll.
+4. **Group & layout** – select any capture name to group rows; adjust column count.
+5. **Inspect images** – click a tile for the viewer, use ←/→/Esc for keyboard navigation. Viewer blocks wrap-around until the full dataset loads and shows a “Loading more…” sentinel while fetching the next batch.
 
-- `config/` centralizes runtime defaults (port, CORS, page sizes) and parses env overrides.
-- `service/` contains the core query pipeline:
-  - `pattern_percent.go` and `pattern_regex.go` parse `%capture%` or named-regex tokens into compiled matchers while tracking literal prefixes to minimize listings.
-  - `query_service.go` plans recursive listing jobs, performs cursor-based pagination, and converts matches into API responses.
-  - `errors.go` propagates validation issues as HTTP 400 responses.
-- `storage/` exposes two interchangeable clients:
-  - `http_client.go` uses the public JSON API (no auth required for public buckets).
-  - `gcs_client.go` wraps the official Go SDK for gRPC-enabled, authenticated deployments.
-- `cmd/server/main.go` wires config, storage client, query service, Gorilla Mux routing, and CORS middleware.
+### Pattern Tips
 
-### Frontend
+- `%token%` matches any non-slash characters.
+- `%%` escapes a literal `%`.
+- Regex mode follows Go-style named capture groups (`?P<name>`).
+- The literal prefix of your pattern is used to minimize GCS listings—add as much concrete pathing as possible for best performance.
 
-- Built with Vite + React + TypeScript for instant dev feedback.
-- `src/App.tsx` orchestrates TanStack Query, the pattern form, grouping controls, and modal viewer.
-- `src/lib/transform.ts` enriches API results with grouping metadata for virtualization.
-- `src/components/GridViewport.tsx` uses `react-window` for incremental rendering and lazy-loaded thumbnails with shimmer placeholders.
-- `src/components/ViewerModal.tsx` provides full-screen previews with keyboard navigation.
-- Tailwind CSS powers the theme; see `tailwind.config.cjs` for the palette and fonts.
+### Keyboard Shortcuts
 
-### Testing
+- **Grid**: Page scroll via mouse/trackpad; fetch more as you near the bottom.
+- **Viewer**: `←` / `→` switch images, `Esc` closes. Wrap-around unlocks once all pages are loaded.
 
-- Backend: `go test ./...`
-- Frontend: `npm run build` ensures type-check + production bundle; optionally run `npm run lint`.
+## Troubleshooting
 
-## API Documentation
+- **No results**: Double-check the bucket/path and ensure your captures align with actual filenames.
+- **Slow scans**: Long-running listings are expected on unbounded prefixes. Narrow the pattern or increase backend worker count (`WORKER_COUNT`) if needed.
+- **CORS**: Update `ALLOWED_ORIGINS` when hosting the frontend separately.
+
+## API Reference
 
 ### `POST /api/query`
 
-Query images based on a pattern.
-
-**Request:**
-```json
+```jsonc
 {
-  "pattern": "gs://wlt-public-sandbox/imgrid-takehome/%exp%/%class%_%idx%.jpg",
+  "pattern": "gs://bucket/%exp%/%class%_00.jpg",
   "mode": "percent",
-  "pageSize": 50,
-  "cursor": "optional-cursor-from-previous-response"
+  "pageSize": 120,
+  "cursor": null
 }
 ```
 
-**Response:**
-```json
-{
-  "captureNames": ["exp", "class", "idx"],
-  "items": [
-    {
-      "object": "imgrid-takehome/exp1/0000_00.jpg",
-      "url": "https://storage.googleapis.com/wlt-public-sandbox/imgrid-takehome/exp1/0000_00.jpg",
-      "captures": {
-        "exp": "exp1",
-        "class": "0000",
-        "idx": "00"
-      }
-    }
-  ],
-  "nextCursor": "optional-next-page-cursor",
-  "stats": {
-    "scannedPrefixes": 5,
-    "scannedObjects": 100,
-    "matched": 50
-  }
-}
-```
+Response includes the capture names, an array of items, cursor for pagination, and scan stats.
 
-## Development
+### `POST /api/count`
 
-### Backend
+Returns `{ "total": <int>, "stats": { ... } }` for the same pattern parameters. Used by the UI to display total match count without hydrating every page.
 
-- Run tests:
+## Development Reference
+
+- **Backend tests**
   ```bash
-  go test ./...
+  cd backend && go test ./...
   ```
-
-- Build:
+- **Frontend checks**
   ```bash
-  go build -o bin/server cmd/server/main.go
-  ```
-
-### Frontend
-
-- Run linter:
-  ```bash
+  cd frontend
   npm run lint
-  ```
-
-- Build for production:
-  ```bash
   npm run build
   ```
+- **Production build**
+  - Backend: `go build -o bin/server ./backend/cmd/server`
+  - Frontend: `npm run build --prefix frontend` (outputs to `frontend/dist`)
 
-## Deployment
+## Deployment Notes
 
-### Backend
-
-The backend can be deployed to any platform that supports Go applications, such as:
-- Google Cloud Run
-- AWS App Runner
-- Heroku
-- Self-hosted server
-
-### Frontend
-
-The frontend can be deployed to any static hosting service, such as:
-- Vercel
-- Netlify
-- GitHub Pages
-- Firebase Hosting
-
-## AI Assistance
-
-Development leveraged an AI pair-programming assistant (Cascade) for scaffolding, code generation, and refactors. All AI-authored changes were reviewed, formatted, and tested (`go test ./...`, `npm run build`) before inclusion.
+- Backend is a stateless Go HTTP service; deploy to Cloud Run, App Runner, or any VM.
+- Frontend is a static Vite bundle; host on Vercel, Netlify, Cloud Storage, etc.
+- Configure environment variables for bucket access, request timeouts, worker counts, and allowed origins per environment.
 
 ## License
 

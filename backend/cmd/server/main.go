@@ -31,6 +31,9 @@ func main() {
 	api.HandleFunc("/query", func(w http.ResponseWriter, r *http.Request) {
 		queryHandler(querySvc, w, r)
 	}).Methods("POST")
+	api.HandleFunc("/count", func(w http.ResponseWriter, r *http.Request) {
+		countHandler(querySvc, w, r)
+	}).Methods("POST")
 
 	c := cors.New(cors.Options{
 		AllowedOrigins:   cfg.AllowedOrigins,
@@ -85,6 +88,28 @@ func queryHandler(svc *service.QueryService, w http.ResponseWriter, r *http.Requ
 	}
 
 	resp, err := svc.Query(r.Context(), req)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if service.IsClientError(err) {
+			status = http.StatusBadRequest
+		}
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), status)
+		return
+	}
+
+	json.NewEncoder(w).Encode(resp)
+}
+
+func countHandler(svc *service.QueryService, w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	var req service.QueryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	resp, err := svc.Count(r.Context(), req)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if service.IsClientError(err) {

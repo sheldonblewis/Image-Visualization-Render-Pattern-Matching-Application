@@ -14,6 +14,7 @@ const (
 	defaultRequestTimeout = 15 * time.Second
 	defaultWorkerCount    = 8
 	defaultPageSize       = 100
+	defaultPrefetchPages  = 1
 	minPageSize           = 25
 	maxPageSize           = 500
 )
@@ -28,6 +29,7 @@ type Config struct {
 	DefaultPageSize int
 	MinPageSize     int
 	MaxPageSize     int
+	PrefetchPages   int
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -41,6 +43,7 @@ func Load() Config {
 		DefaultPageSize: getIntEnv("DEFAULT_PAGE_SIZE", defaultPageSize),
 		MinPageSize:     getIntEnv("MIN_PAGE_SIZE", minPageSize),
 		MaxPageSize:     getIntEnv("MAX_PAGE_SIZE", maxPageSize),
+		PrefetchPages:   getIntEnv("PREFETCH_PAGES", defaultPrefetchPages),
 	}
 
 	if cfg.MinPageSize < 1 {
@@ -54,6 +57,9 @@ func Load() Config {
 	}
 	if cfg.WorkerCount < 1 {
 		cfg.WorkerCount = defaultWorkerCount
+	}
+	if cfg.PrefetchPages < 0 {
+		cfg.PrefetchPages = 0
 	}
 
 	return cfg

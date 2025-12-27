@@ -52,3 +52,9 @@ type QueryResponse struct {
 	NextCursor   *string     `json:"nextCursor,omitempty"`
 	Stats        QueryStats  `json:"stats"`
 }
+
+// CountResponse returns total matches for a given pattern.
+type CountResponse struct {
+	Total int        `json:"total"`
+	Stats QueryStats `json:"stats"`
+}
