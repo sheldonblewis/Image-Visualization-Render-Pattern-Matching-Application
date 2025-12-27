@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { PatternForm } from './components/PatternForm';
 import { GridViewport } from './components/GridViewport';
@@ -15,18 +15,20 @@ export default function App() {
   const [mode, setMode] = useState<QueryMode>('percent');
   const [groupBy, setGroupBy] = useState<string | null>(null);
   const [columns, setColumns] = useState(4);
-  const [selected, setSelected] = useState<MatchItem | null>(null);
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [hasSubmitted, setHasSubmitted] = useState(false);
+  const [queryVersion, setQueryVersion] = useState(0);
+  const [isViewerLoadingAhead, setIsViewerLoadingAhead] = useState(false);
 
   const {
     data,
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
-    refetch,
     isLoading,
     error,
   } = useInfiniteQuery<QueryResponse>({
-    queryKey: ['matches', pattern, mode],
+    queryKey: ['matches', pattern, mode, queryVersion],
     initialPageParam: null as string | null,
     queryFn: async ({ pageParam }) => {
       const response = await fetch('/api/query', {
@@ -41,19 +43,22 @@ export default function App() {
       return response.json();
     },
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
-    enabled: !!pattern,
+    enabled: hasSubmitted && !!pattern,
     refetchOnMount: false,
   });
 
   const captureNames = data?.pages[0]?.captureNames ?? [];
   const matches = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data]);
   const controlsDisabled = captureNames.length === 0 || isLoading;
+  const allItemsLoaded = !hasNextPage && !isFetchingNextPage;
 
   useEffect(() => {
-    if (!groupBy && captureNames.length > 0) {
-      setGroupBy(captureNames[0]);
+    if (captureNames.length > 0) {
+      setGroupBy((prev) => (prev && captureNames.includes(prev) ? prev : captureNames[0]));
+    } else {
+      setGroupBy(null);
     }
-  }, [captureNames, groupBy]);
+  }, [captureNames]);
 
   const { rows, matches: groupedMatches } = useMemo<GroupedResult>(
     () => groupMatches(matches, groupBy && captureNames.includes(groupBy) ? groupBy : captureNames[0], columns),
@@ -61,6 +66,125 @@ export default function App() {
   );
   const totalFiles = groupedMatches.length;
   const captureCount = captureNames.length;
+  const previousMatchCountRef = useRef(groupedMatches.length);
+
+  const handleSelect = (item: MatchItem) => {
+    setIsViewerLoadingAhead(false);
+    setSelectedIndex(item.globalIndex);
+  };
+
+  const handleCloseViewer = () => {
+    setSelectedIndex(null);
+    setIsViewerLoadingAhead(false);
+  };
+
+  const triggerViewerPrefetch = useCallback(() => {
+    if (!hasNextPage) {
+      return;
+    }
+    setIsViewerLoadingAhead(true);
+    if (!isFetchingNextPage) {
+      fetchNextPage();
+    }
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
+
+  const handleNavigate = useCallback(
+    (direction: 1 | -1) => {
+      setSelectedIndex((prev) => {
+        if (groupedMatches.length === 0) {
+          return prev;
+        }
+
+        const lastIndex = groupedMatches.length - 1;
+        const sentinelIndex = groupedMatches.length;
+        const currentIndex = prev ?? (direction === 1 ? 0 : lastIndex);
+
+        if (direction === 1) {
+          if (currentIndex === sentinelIndex) {
+            return sentinelIndex;
+          }
+          if (currentIndex >= lastIndex) {
+            if (!allItemsLoaded && hasNextPage) {
+              triggerViewerPrefetch();
+              return sentinelIndex;
+            }
+            setIsViewerLoadingAhead(false);
+            return allItemsLoaded ? 0 : lastIndex;
+          }
+          setIsViewerLoadingAhead(false);
+          return currentIndex + 1;
+        }
+
+        if (direction === -1) {
+          if (currentIndex === sentinelIndex) {
+            setIsViewerLoadingAhead(false);
+            return lastIndex;
+          }
+          if (currentIndex <= 0) {
+            setIsViewerLoadingAhead(false);
+            return allItemsLoaded ? lastIndex : 0;
+          }
+          setIsViewerLoadingAhead(false);
+          return currentIndex - 1;
+        }
+
+        return currentIndex;
+      });
+    },
+    [groupedMatches.length, allItemsLoaded, hasNextPage, triggerViewerPrefetch]
+  );
+
+  useEffect(() => {
+    const previousCount = previousMatchCountRef.current;
+    if (isViewerLoadingAhead) {
+      if (groupedMatches.length > previousCount) {
+        setIsViewerLoadingAhead(false);
+        setSelectedIndex(previousCount);
+      } else if (!hasNextPage && !isFetchingNextPage) {
+        setIsViewerLoadingAhead(false);
+        setSelectedIndex((prev) => {
+          if (prev === null) {
+            return prev;
+          }
+          if (prev >= groupedMatches.length) {
+            return groupedMatches.length > 0 ? groupedMatches.length - 1 : null;
+          }
+          return prev;
+        });
+      }
+    } else if (selectedIndex !== null && selectedIndex >= groupedMatches.length && groupedMatches.length > 0) {
+      setSelectedIndex(groupedMatches.length - 1);
+    } else if (groupedMatches.length === 0 && selectedIndex !== null) {
+      setSelectedIndex(null);
+    }
+
+    previousMatchCountRef.current = groupedMatches.length;
+  }, [groupedMatches.length, hasNextPage, isFetchingNextPage, isViewerLoadingAhead, selectedIndex]);
+
+  useEffect(() => {
+    setSelectedIndex(null);
+    setIsViewerLoadingAhead(false);
+  }, [groupBy]);
+
+  const handlePatternSubmit = useCallback(
+    (nextPattern: string, nextMode: QueryMode) => {
+      if (!nextPattern) {
+        setHasSubmitted(false);
+        setPattern('');
+        setSelectedIndex(null);
+        setIsViewerLoadingAhead(false);
+        return;
+      }
+
+      setPattern(nextPattern);
+      setMode(nextMode);
+      setHasSubmitted(true);
+      setQueryVersion((prevVersion) => prevVersion + 1);
+      setSelectedIndex(null);
+      setIsViewerLoadingAhead(false);
+    },
+    []
+  );
 
   return (
     <div className="app-shell">
@@ -69,15 +193,7 @@ export default function App() {
           <span className="eyebrow">Google Cloud Storage</span>
           <h1>Image Grid Viewer</h1>
         </div>
-        <PatternForm
-          value={pattern}
-          mode={mode}
-          onSubmit={(nextPattern: string, nextMode: QueryMode) => {
-            setPattern(nextPattern);
-            setMode(nextMode);
-            refetch({ throwOnError: false, cancelRefetch: true });
-          }}
-        />
+        <PatternForm value={pattern} mode={mode} onSubmit={handlePatternSubmit} />
       </header>
 
       {(captureNames.length > 0 || isLoading) && (
@@ -99,7 +215,11 @@ export default function App() {
                   ))}
                 </select>
               </div>
-              <ColumnSelector value={columns} onChange={setColumns} disabled={controlsDisabled} />
+              <ColumnSelector
+                value={captureNames.length > 0 ? columns : null}
+                onChange={setColumns}
+                disabled={controlsDisabled}
+              />
             </div>
             <div className="results-meta">
               <span>
@@ -116,7 +236,7 @@ export default function App() {
             hasNextPage={hasNextPage}
             fetchNextPage={fetchNextPage}
             isFetchingNextPage={isFetchingNextPage}
-            onSelect={setSelected}
+            onSelect={handleSelect}
             columns={columns}
             captureNames={captureNames}
           />
@@ -125,15 +245,12 @@ export default function App() {
 
       <ViewerModal
         items={groupedMatches}
-        selected={selected}
-        onClose={() => setSelected(null)}
-        onNavigate={(direction: 1 | -1) => {
-          if (!selected || groupedMatches.length === 0) return;
-          const idx = groupedMatches.findIndex((item: MatchItem) => item.object === selected.object);
-          if (idx === -1) return;
-          const nextIdx = (idx + direction + groupedMatches.length) % groupedMatches.length;
-          setSelected(groupedMatches[nextIdx]);
-        }}
+        selectedIndex={selectedIndex}
+        captureNames={captureNames}
+        allItemsLoaded={allItemsLoaded}
+        isLoadingAhead={isViewerLoadingAhead}
+        onClose={handleCloseViewer}
+        onNavigate={handleNavigate}
       />
     </div>
   );

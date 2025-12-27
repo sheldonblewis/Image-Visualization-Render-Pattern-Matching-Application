@@ -3,6 +3,7 @@ import { QueryItem } from '../types/api';
 export interface MatchItem extends QueryItem {
   groupKey: string;
   groupValue: string;
+  globalIndex: number;
 }
 
 export type GridRow =
@@ -19,15 +20,14 @@ export function groupMatches(items: QueryItem[], groupBy?: string, columns = 4):
     return { rows: [], matches: [] };
   }
 
-  const groups = new Map<string, MatchItem[]>();
+  const groups = new Map<string, QueryItem[]>();
 
   for (const item of items) {
     const value = item.captures[groupBy] ?? '—';
-    const match: MatchItem = { ...item, groupKey: groupBy, groupValue: value };
     if (!groups.has(value)) {
       groups.set(value, []);
     }
-    groups.get(value)!.push(match);
+    groups.get(value)!.push(item);
   }
 
   const sortedKeys = Array.from(groups.keys()).sort((a, b) => a.localeCompare(b));
@@ -36,8 +36,21 @@ export function groupMatches(items: QueryItem[], groupBy?: string, columns = 4):
 
   for (const key of sortedKeys) {
     rows.push({ type: 'header', key: `header-${groupBy}-${key}`, label: `${groupBy}: ${key}` });
-    const groupMatches = groups.get(key)!;
+    const groupItems = groups.get(key)!;
+    const groupMatches: MatchItem[] = [];
+
+    for (const item of groupItems) {
+      const match: MatchItem = {
+        ...item,
+        groupKey: groupBy,
+        groupValue: key,
+        globalIndex: matches.length + groupMatches.length,
+      };
+      groupMatches.push(match);
+    }
+
     matches.push(...groupMatches);
+
     for (let i = 0; i < groupMatches.length; i += columns) {
       rows.push({
         type: 'images',

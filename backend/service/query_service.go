@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/worldlabs/image-grid-viewer/backend/config"
 	"github.com/worldlabs/image-grid-viewer/backend/storage"
@@ -36,6 +37,18 @@ type cursorState struct {
 type QueryService struct {
 	cfg     config.Config
 	storage storage.Client
+}
+
+type jobTask struct {
+	job   listJob
+	limit int
+}
+
+type jobOutcome struct {
+	items   []QueryItem
+	newJobs []listJob
+	stats   QueryStats
+	err     error
 }
 
 func NewQueryService(cfg config.Config, storage storage.Client) *QueryService {
@@ -90,26 +103,143 @@ func (qs *QueryService) Query(ctx context.Context, req QueryRequest) (*QueryResp
 
 	items := make([]QueryItem, 0, pageSize)
 
-	for len(items) < pageSize && len(jobs) > 0 {
-		job := jobs[0]
-		jobs = jobs[1:]
+	workerCount := qs.cfg.WorkerCount
+	if workerCount < 1 {
+		workerCount = 1
+	}
 
-		switch job.Kind {
-		case jobKindSegment:
-			additionalJobs, err := qs.processSegmentJob(ctx, cp, job, &stats)
-			if err != nil {
-				return nil, err
+	for len(items) < pageSize && len(jobs) > 0 {
+		remaining := pageSize - len(items)
+		if remaining <= 0 {
+			break
+		}
+
+		batchSize := workerCount
+		if len(jobs) < batchSize {
+			batchSize = len(jobs)
+		}
+
+		rawBatch := make([]jobTask, 0, batchSize)
+		for len(rawBatch) < batchSize && len(jobs) > 0 {
+			job := jobs[0]
+			jobs = jobs[1:]
+			rawBatch = append(rawBatch, jobTask{job: job})
+		}
+
+		if len(rawBatch) == 0 {
+			break
+		}
+
+		deferred := make([]listJob, 0)
+		objectJobsRemaining := 0
+		for _, task := range rawBatch {
+			if task.job.Kind == jobKindObjects {
+				objectJobsRemaining++
 			}
-			jobs = append(jobs, additionalJobs...)
-		case jobKindObjects:
-			newItems, nextJobs, err := qs.processObjectsJob(ctx, cp, job, pageSize-len(items), &stats)
-			if err != nil {
-				return nil, err
+		}
+
+		finalBatch := make([]jobTask, 0, len(rawBatch))
+		objectsLeft := objectJobsRemaining
+		allocRemaining := remaining
+
+		for _, task := range rawBatch {
+			if task.job.Kind != jobKindObjects {
+				finalBatch = append(finalBatch, task)
+				continue
 			}
-			items = append(items, newItems...)
-			jobs = append(jobs, nextJobs...)
-		default:
-			return nil, fmt.Errorf("unknown job kind: %s", job.Kind)
+
+			if allocRemaining <= 0 || objectsLeft <= 0 {
+				deferred = append(deferred, task.job)
+				objectsLeft--
+				continue
+			}
+
+			limit := allocRemaining / objectsLeft
+			if limit == 0 {
+				limit = 1
+			}
+			if limit > allocRemaining {
+				limit = allocRemaining
+			}
+
+			finalBatch = append(finalBatch, jobTask{job: task.job, limit: limit})
+			allocRemaining -= limit
+			objectsLeft--
+		}
+
+		if len(deferred) > 0 {
+			jobs = append(deferred, jobs...)
+		}
+
+		if len(finalBatch) == 0 {
+			break
+		}
+
+		outcomes := make(chan jobOutcome, len(finalBatch))
+		var wg sync.WaitGroup
+
+		for _, task := range finalBatch {
+			wg.Add(1)
+			go func(task jobTask) {
+				defer wg.Done()
+				localStats := QueryStats{}
+				switch task.job.Kind {
+				case jobKindSegment:
+					additionalJobs, err := qs.processSegmentJob(ctx, cp, task.job, &localStats)
+					outcomes <- jobOutcome{
+						newJobs: additionalJobs,
+						stats:   localStats,
+						err:     err,
+					}
+				case jobKindObjects:
+					if task.limit <= 0 {
+						outcomes <- jobOutcome{
+							newJobs: []listJob{task.job},
+							stats:   localStats,
+						}
+						return
+					}
+					newItems, nextJobs, err := qs.processObjectsJob(ctx, cp, task.job, task.limit, &localStats)
+					outcomes <- jobOutcome{
+						items:   newItems,
+						newJobs: nextJobs,
+						stats:   localStats,
+						err:     err,
+					}
+				default:
+					outcomes <- jobOutcome{
+						err: fmt.Errorf("unknown job kind: %s", task.job.Kind),
+					}
+				}
+			}(task)
+		}
+
+		wg.Wait()
+		close(outcomes)
+
+		for outcome := range outcomes {
+			if outcome.err != nil {
+				return nil, outcome.err
+			}
+
+			stats.ScannedPrefixes += outcome.stats.ScannedPrefixes
+			stats.ScannedObjects += outcome.stats.ScannedObjects
+			stats.Matched += outcome.stats.Matched
+
+			if len(outcome.items) > 0 {
+				available := pageSize - len(items)
+				if available > 0 {
+					if len(outcome.items) > available {
+						items = append(items, outcome.items[:available]...)
+					} else {
+						items = append(items, outcome.items...)
+					}
+				}
+			}
+
+			if len(outcome.newJobs) > 0 {
+				jobs = append(jobs, outcome.newJobs...)
+			}
 		}
 	}
 

@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { VariableSizeList, ListOnItemsRenderedProps } from 'react-window';
 import { GridRow, MatchItem } from '../lib/transform';
 import { useWindowSize } from '../hooks/useWindowSize';
@@ -18,8 +18,11 @@ interface GridViewportProps {
   captureNames: string[];
 }
 
+type LoadingRow = { type: 'loading'; key: 'loading' };
+type ViewportRow = GridRow | LoadingRow;
+
 interface RowProps {
-  row: GridRow;
+  row: ViewportRow;
   style: React.CSSProperties;
   onSelect: (item: MatchItem) => void;
 }
@@ -29,7 +32,11 @@ const ThumbCard = memo(
     const [status, setStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
 
     return (
-      <button className={`image-card ${status}`} onClick={() => status !== 'error' && onSelect(item)}>
+      <button
+        type="button"
+        className={`image-card ${status}`}
+        onClick={() => status !== 'error' && onSelect(item)}
+      >
         <div className="thumb">
           {status === 'error' ? (
             <span className="thumb-error">Failed to load</span>
@@ -62,6 +69,31 @@ const ListRow = memo(
       return (
         <div className="grid-row header-row" style={style}>
           <span>{row.label}</span>
+        </div>
+      );
+    }
+
+    if (row.type === 'loading') {
+      return (
+        <div
+          className="grid-row image-row loading-row"
+          style={{
+            ...style,
+            display: 'grid',
+            gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+            gap: '1rem',
+          }}
+          aria-hidden="true"
+        >
+          {Array.from({ length: columns }).map((_, idx) => (
+            <div key={`loading-tile-${idx}`} className="image-card placeholder shimmer-tile">
+              <div className="thumb shimmer-block" />
+              <div className="meta">
+                <span className="skeleton-line short" />
+                <span className="skeleton-line" />
+              </div>
+            </div>
+          ))}
         </div>
       );
     }
@@ -105,26 +137,35 @@ export function GridViewport({
   const { height } = useWindowSize();
   const listHeight = Math.max(360, height - 320);
   const listRef = useRef<VariableSizeList>(null);
+  const viewportRows = useMemo<ViewportRow[]>(() => {
+    if (hasNextPage || isFetchingNextPage) {
+      return [...rows, { type: 'loading', key: 'loading' }];
+    }
+    return rows;
+  }, [rows, hasNextPage, isFetchingNextPage]);
 
   useEffect(() => {
     listRef.current?.resetAfterIndex(0, true);
-  }, [rows]);
+  }, [viewportRows]);
 
-  const getItemSize = useCallback((index: number) => {
-    const row = rows[index];
-    return row?.type === 'header' ? HEADER_HEIGHT : IMAGE_ROW_HEIGHT;
-  }, [rows]);
+  const getItemSize = useCallback(
+    (index: number) => {
+      const row = viewportRows[index];
+      return row?.type === 'header' ? HEADER_HEIGHT : IMAGE_ROW_HEIGHT;
+    },
+    [viewportRows]
+  );
 
-  const itemKey = useCallback((index: number) => rows[index]?.key ?? `row-${index}`, [rows]);
+  const itemKey = useCallback((index: number) => viewportRows[index]?.key ?? `row-${index}`, [viewportRows]);
 
   const handleItemsRendered = useCallback(
     ({ visibleStopIndex }: ListOnItemsRenderedProps) => {
       if (!hasNextPage || isFetchingNextPage) return;
-      if (visibleStopIndex >= rows.length - 8) {
+      if (visibleStopIndex >= viewportRows.length - 8) {
         fetchNextPage();
       }
     },
-    [fetchNextPage, hasNextPage, isFetchingNextPage, rows.length]
+    [fetchNextPage, hasNextPage, isFetchingNextPage, viewportRows.length]
   );
 
   if (error) {
@@ -145,24 +186,22 @@ export function GridViewport({
         ref={listRef}
         height={listHeight}
         width="100%"
-        itemCount={rows.length}
+        itemCount={viewportRows.length}
         itemSize={getItemSize}
         itemKey={itemKey}
         overscanCount={6}
         onItemsRendered={handleItemsRendered}
       >
         {({ index, style }) => (
-          <ListRow row={rows[index]} style={style} onSelect={onSelect} columns={columns} captureNames={captureNames} />
+          <ListRow
+            row={viewportRows[index]}
+            style={style}
+            onSelect={onSelect}
+            columns={columns}
+            captureNames={captureNames}
+          />
         )}
       </VariableSizeList>
-      {isFetchingNextPage && (
-        <div className="panel status subtle loading-inline">
-          <span>Loading more…</span>
-          <div className="progress">
-            <div className="progress-bar" />
-          </div>
-        </div>
-      )}
     </div>
   );
 }
